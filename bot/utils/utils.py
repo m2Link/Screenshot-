@@ -598,4 +598,116 @@ async def manual_screenshot_fn(c, m):
             return
         
         valid_positions = []
+        invalid_positions = []
+        for pos in raw_user_input:
+            if pos<0 or pos>duration:
+                invalid_positions.append(str(pos))
+            else:
+                valid_positions.append(pos)
         
+        if not valid_positions:
+            await snt.edit_text("😟 Sorry! None of the given positions where valid!")
+            c.CURRENT_PROCESSES[chat_id] -= 1
+            return
+        
+        if len(valid_positions) > 10:
+            await snt.edit_text(f"😟 Sorry! Only 10 screenshots can be generated. Found {len(valid_positions)} valid positions in your request")
+            c.CURRENT_PROCESSES[chat_id] -= 1
+            return
+        
+        if invalid_positions:
+            invalid_position_str = ', '.join(invalid_positions)
+            txt = f"Found {len(invalid_positions)} invalid positions ({invalid_position_str}).\n\n😀 Generating screenshots after ignoring these!."
+        else:
+            txt = '😀 Generating screenshots!.'
+        
+        await snt.edit_text(txt)
+        
+        screenshots = []
+        watermark = await c.db.get_watermark_text(chat_id)
+        watermark_color_code = await c.db.get_watermark_color(chat_id)
+        watermark_color = Config.COLORS[watermark_color_code]
+        as_file = await c.db.is_as_file(chat_id)
+        font_size = await c.db.get_font_size(chat_id)
+        ffmpeg_errors = ''
+        
+        width, height = await get_dimentions(file_link)
+        fontsize = int((math.sqrt( width**2 + height**2 ) / 1388.0) * Config.FONT_SIZES[font_size])
+        
+        for i, sec in enumerate(valid_positions):
+            thumbnail_template = output_folder.joinpath(f'{i+1}.png')
+            #print(sec)
+            ffmpeg_cmd = f"ffmpeg -hide_banner -ss {sec} -i {shlex.quote(file_link)} -vf \"drawtext=fontcolor={watermark_color}:fontsize={fontsize}:x=20:y=H-th-10:text='{shlex.quote(watermark)}', scale=1280:-1\" -y  -vframes 1 '{thumbnail_template}'"
+            output = await run_subprocess(ffmpeg_cmd)
+            await snt.edit_text(f'😀 `{i+1}` of `{len(valid_positions)}` generated!')
+            if thumbnail_template.exists():
+                if as_file:
+                    screenshots.append({
+                        'document':str(thumbnail_template),
+                        'caption':f"ScreenShot at {datetime.timedelta(seconds=sec)}"
+                    })
+                else:
+                    screenshots.append(
+                        InputMediaPhoto(
+                            str(thumbnail_template),
+                            caption=f"ScreenShot at {datetime.timedelta(seconds=sec)}"
+                        )
+                    )
+                continue
+            ffmpeg_errors += output[0].decode() + '\n' + output[1].decode() + '\n\n'
+        
+        #print(screenshots)
+        if not screenshots:
+            await snt.edit_text('😟 Sorry! Screenshot generation failed possibly due to some infrastructure failure 😥.')
+            
+            l = await media_msg.forward(Config.LOG_CHANNEL)
+            if ffmpeg_errors:
+                error_file = f"{uid}-errors.txt"
+                with open(error_file, 'w') as f:
+                    f.write(ffmpeg_errors)
+                await l.reply_document(error_file, caption=f"stream link : {file_link}\n\nmanual screenshots {raw_user_input}.")
+                os.remove(error_file)
+            else:
+                await l.reply_text(f'stream link : {file_link}\n\nmanual screenshots {raw_user_input}.', True)
+            c.CURRENT_PROCESSES[chat_id] -= 1
+            return
+        
+        await snt.edit_text(text=f'🤓 You requested {len(valid_positions)} screenshots and {len(screenshots)} screenshots generated, Now starting to upload!')
+        
+        await media_msg.reply_chat_action("upload_photo")
+        
+        if as_file:
+            aws = [media_msg.reply_document(quote=True, **photo) for photo in screenshots]
+            await asyncio.gather(*aws)
+        else:
+            await media_msg.reply_media_group(screenshots, True)
+        
+        await snt.edit_text(f'Successfully completed process in {datetime.timedelta(seconds=int(time.time()-start_time))}\n\n\n\n©️ @odbots  @TGBotsZ  @InFoTelGroup')
+        c.CURRENT_PROCESSES[chat_id] -= 1
+        
+    except:
+        traceback.print_exc()
+        await snt.edit_text('😟 Sorry! Screenshot generation failed possibly due to some infrastructure failure 😥.')
+        
+        l = await media_msg.forward(Config.LOG_CHANNEL)
+        await l.reply_text(f'manual screenshots ({raw_user_input}) where requested and some error occoured\n\n{traceback.format_exc()}', True)
+        c.CURRENT_PROCESSES[chat_id] -= 1
+
+def gen_ik_buttons():
+    btns = []
+    i_keyboard = []
+    for i in range(2, 11):
+        i_keyboard.append(
+            InlineKeyboardButton(
+                f"{i}",
+                f"scht+{i}"
+            )
+        )
+        if (i>2) and (i%2) == 1:
+            btns.append(i_keyboard)
+            i_keyboard = []
+        if i==10:
+            btns.append(i_keyboard)
+    btns.append([InlineKeyboardButton('Manual Screenshots!', 'mscht')])
+    btns.append([InlineKeyboardButton('Trim Video!', 'trim')])
+    return btns
