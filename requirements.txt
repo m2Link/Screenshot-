@@ -1,5 +1,7 @@
-https://github.com/pyrogram/pyrogram/archive/asyncio.zip
-https://github.com/Tinche/aiofiles/archive/master.zip
+pyrogram
 tgcrypto
 motor
 dnspython
+async-timeout
+aiohttp
+nest_asyncio
